@@ -42,10 +42,17 @@ Build with the [Meltano Target SDK](https://sdk.meltano.com).
     "flattening_enabled": true|false,
     "flattening_max_depth": int,
     "max_batch_age": int,
-    "max_batch_size": int
+    "max_batch_size": int,
+    "partition_by": ["tenant=${TENANT}", "dt=${CURRENT_DATE_MINUTE_LEVEL}"]
 }
 ```
 `format.format_parquet.validate` [`Boolean`, default: `False`] - this flag determines whether the data types of incoming data elements should be validated. When set `True`, a schema is created from the first record and all subsequent records that don't match that data type are cast.
+
+- `partition_by` [`Array[String]`, optional]: List of key-value strings (e.g., 'tenant=${TENANT}') to be inserted as partition folders **after the stream name** in the S3 key path. For example, if `partition_by: ['tenant=${TENANT}', 'dt=${CURRENT_DATE_MINUTE_LEVEL}']` and the stream is `Account`, the S3 key will look like:
+
+  ```
+  bucket/prefix/Account/tenant=${TENANT}/dt=${CURRENT_DATE_MINUTE_LEVEL}/...
+  ```
 
 ## Capabilities
 

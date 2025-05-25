@@ -49,6 +49,7 @@ class FormatBase(metaclass=ABCMeta):
         self.compression = "gz"  # TODO: need a list of compatible compression types
 
         self.stream_name_path_override = config.get("stream_name_path_override", None)
+        self.partition_by = config.get("partition_by", [])
 
         if self.cloud_provider.get("cloud_provider_type", None) == "aws":
             aws_config = self.cloud_provider.get("aws", None)
@@ -111,7 +112,12 @@ class FormatBase(metaclass=ABCMeta):
             if self.stream_name_path_override is None
             else self.stream_name_path_override
         )
-        folder_path = f"{self.bucket}/{self.prefix}/{stream_name}/"
+        # Insert partition_by values after stream_name if present
+        partition_path = ""
+        if self.partition_by:
+            # partition_by values are inserted as folders after the stream name
+            partition_path = "/".join(self.partition_by) + "/"
+        folder_path = f"{self.bucket}/{self.prefix}/{stream_name}/" + partition_path
         file_name = ""
         if self.config["append_date_to_prefix"]:
             grain = DATE_GRAIN[self.config["append_date_to_prefix_grain"].lower()]
