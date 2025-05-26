@@ -190,6 +190,12 @@ class Targets3(Target):
             required=False,
             default=10000,
         ),
+        th.Property(
+            "partition_by",
+            th.ArrayType(th.StringType),
+            required=False,
+            description="List of key-value strings (e.g., 'tenant=${TENANT}') to prepend as partitions in the S3 key path after the stream name.",
+        ),
     ).to_dict()
 
     default_sink_class = s3Sink
