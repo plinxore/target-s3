@@ -52,13 +52,17 @@ BUCKET = "bronze"
 # is the same layout the original architecture doc says is already used in
 # production for source_db, and it is what target-s3 actually supports.
 # It does NOT produce a single combined "dt=YYYY-MM-DD" folder. Filename
-# uniqueness comes from a monotonic per-run "-part-NNNNN" counter, not a
-# timestamp (a wall-clock suffix can collide under load and breaks
-# idempotency across reruns -- see TestMultiBatchSameStream/TestIdempotency).
+# uniqueness is "-part-NNNNN-<uuid>": the counter gives batches a readable
+# order within a run, the UUID guarantees no two runs can ever collide on
+# the same key (a same-day rerun gets a brand new UUID per batch, so it
+# can never silently clobber a previous run's objects -- see
+# TestMultiBatchSameStream/TestIdempotency below).
 KEY_PATTERN = re.compile(
     r"^sources/source_db/(?P<stream>\w+)/"
     r"year=(?P<year>\d{4})/month=(?P<month>\d{2})/day=(?P<day>\d{2})/"
-    r"(?P=stream)-part-(?P<part>\d{5})\.jsonl\.gz$"
+    r"(?P=stream)-part-(?P<part>\d{5})-"
+    r"(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+    r"\.jsonl\.gz$"
 )
 
 
@@ -168,9 +172,9 @@ class TestRealPathShape:
         assert m.group("stream") == "invoices"
         assert m.group("part") == "00001"
         # fix #38 (empty filename -> stream_name fallback) holds even with
-        # the part-counter appended: the filename still *starts* with the
-        # stream name, matching .../invoices-part-00001.jsonl.gz exactly.
-        assert key.split("/")[-1] == "invoices-part-00001.jsonl.gz"
+        # the part-counter/uuid appended: the filename still *starts* with
+        # the stream name, matching .../invoices-part-00001-<uuid>.jsonl.gz.
+        assert key.split("/")[-1].startswith("invoices-part-00001-")
 
 
 class TestMultiBatchSameStream:
@@ -271,13 +275,25 @@ class TestMultiBatchSameStream:
 
 
 class TestIdempotency:
-    def test_rerunning_the_same_stream_overwrites_rather_than_duplicates(self, s3_client):
+    """"Idempotency" here means never colliding, not never repeating: this
+    target guarantees a rerun can never silently clobber a previous run's
+    objects (that was the original bug, just moved from "between batches"
+    to "between runs" if the part-counter had been the only mechanism).
+    Whether a rerun should *replace* or *add to* what's already on disk is
+    not this target's decision -- it's the consumer's: a full-refresh
+    table reads a fixed path each run (so the pipeline points that path at
+    a location it clears/replaces between runs); an incremental table
+    reads a glob over the date partition and is expected to accumulate
+    every run's files. This target only promises the second case is safe
+    by construction -- it never has to guess which one a given table
+    wants."""
+
+    def test_rerunning_the_same_stream_accumulates_without_colliding(self, s3_client):
         # A retried/rerun extraction (e.g. a Dagster retry) replays the
-        # exact same Singer stream. Batch N must get the exact same key on
-        # both runs -- otherwise a rerun silently accumulates duplicate
-        # objects that a downstream reader (ClickHouse s3()) would
-        # double-count, which is exactly what a timestamp-based suffix
-        # would do (new wall-clock time -> new filename -> new object).
+        # exact same Singer stream. The counter alone would restart at 1
+        # on every run and collide with the previous run's files; the UUID
+        # is what makes that impossible regardless of how many times the
+        # same stream is replayed on the same day.
         with INVOICES_FIXTURE.open() as f:
             content = f.read()
         config = base_config(max_batch_size=150)
@@ -287,16 +303,22 @@ class TestIdempotency:
         assert len(objects_after_first_run) == 3
 
         _listen(config, content)
-        objects_after_second_run = _all_objects(s3_client)
+        objects_after_both_runs = _all_objects(s3_client)
 
-        assert set(objects_after_second_run) == set(objects_after_first_run), (
-            "a rerun produced different keys than the first run -- this would "
-            "accumulate duplicates in MinIO instead of overwriting"
+        assert len(objects_after_both_runs) == 6, (
+            "expected the second run's 3 objects to accumulate alongside "
+            "the first run's 3, not collide with or replace them"
         )
-        assert len(objects_after_second_run) == 3
+        second_run_keys = set(objects_after_both_runs) - set(objects_after_first_run)
+        assert len(second_run_keys) == 3, (
+            "the second run must not reuse any key from the first run"
+        )
+        for key in objects_after_both_runs:
+            m = KEY_PATTERN.match(key)
+            assert m, f"key does not match expected path shape: {key}"
 
-        total = sum(len(_decompress_lines(raw)) for raw in objects_after_second_run.values())
-        assert total == 405, "rerun should still total 405 records, not 810"
+        total = sum(len(_decompress_lines(raw)) for raw in objects_after_both_runs.values())
+        assert total == 810, "both runs' records should all be present: 2 x 405"
 
 
 class TestCompressionEndToEnd:

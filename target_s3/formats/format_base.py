@@ -142,18 +142,27 @@ class FormatBase(metaclass=ABCMeta):
         if self.config["append_date_to_filename"]:
             grain = DATE_GRAIN[self.config["append_date_to_filename_grain"].lower()]
             file_name += f"{self.create_file_structure(batch_start, grain)}"
-        # Unconditional, clock-independent uniqueness guarantee: without
-        # this, multiple batches for the same stream on the same day (any
-        # stream larger than max_batch_size records) compute the identical
-        # key and each batch silently overwrites the previous one's object
-        # -- the run reports success, nothing raises, and only the last
-        # batch survives. A monotonic per-run counter (not a timestamp)
-        # also keeps reruns of the same extraction idempotent: batch N gets
-        # the same "-part-NNNNN" suffix on every rerun, so a retry
-        # overwrites its own prior objects instead of accumulating
-        # duplicates that a downstream reader (e.g. ClickHouse s3()) would
-        # double-count.
-        file_name += f"-part-{self.context['batch_number']:05d}"
+        # Unconditional uniqueness guarantee: without this, multiple
+        # batches for the same stream on the same day (any stream larger
+        # than max_batch_size records) compute the identical key and each
+        # batch silently overwrites the previous one's object -- the run
+        # reports success, nothing raises, and only the last batch
+        # survives. The counter gives batches a readable, ordered position
+        # within *this* run; the UUID is what guarantees two different
+        # runs (e.g. a same-day retry) can never collide on the same key,
+        # even though both start counting at 1.
+        #
+        # This target never decides whether a rerun should overwrite or
+        # accumulate -- it only guarantees a rerun can never silently
+        # clobber a previous run's objects by accident. Which behavior a
+        # given table actually gets is a downstream/consumer decision: a
+        # full-refresh table reads from a fixed path and naturally
+        # replaces old data each run; an incremental table reads via a
+        # glob over the date partition and accumulates every run's files.
+        # That choice belongs to the pipeline (e.g. which path/glob
+        # ClickHouse's s3() table function is pointed at), not to this
+        # target.
+        file_name += f"-part-{self.context['batch_number']:05d}-{self.context['batch_uuid']}"
 
         return f"{folder_path}{file_name}.{self.extension}{self.compression_extension}"
 

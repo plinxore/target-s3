@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import logging
+import uuid
 
 from singer_sdk.helpers._typing import DatetimeErrorTreatmentEnum
 from singer_sdk.sinks import BatchSink
@@ -43,11 +44,13 @@ class s3Sink(BatchSink):
                 )
         else:
             raise Exception("No file type supplied.")
-        # Monotonic, per-stream, per-run counter used to guarantee a unique
-        # object key per batch (see create_key()'s "-part-NNNNN" suffix).
-        # Deliberately clock-independent: a wall-clock timestamp can collide
-        # under load and breaks idempotency (a rerun of the same extraction
-        # would mint new filenames instead of overwriting the same ones).
+        # Monotonic, per-stream, per-run counter giving each batch a
+        # readable, ordered position within this run (see create_key()'s
+        # "-part-NNNNN" suffix). On its own this only guarantees
+        # uniqueness *within* a run: two separate runs (e.g. a same-day
+        # retry) would both start counting at 1 and collide. The
+        # per-batch UUID appended alongside it (see process_batch) is what
+        # guarantees no two runs -- ever -- can collide on the same key.
         self._batch_counter = 0
 
     @property
@@ -82,6 +85,7 @@ class s3Sink(BatchSink):
         context["stream_schema"] = self.schema
         self._batch_counter += 1
         context["batch_number"] = self._batch_counter
+        context["batch_uuid"] = uuid.uuid4()
         # creates new object for each batch
         format_type_client = format_type_factory(
             FORMAT_TYPE[self.format_type], self.config, context

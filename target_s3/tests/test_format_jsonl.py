@@ -12,6 +12,8 @@ import datetime as dt
 import decimal
 import gzip
 import logging
+import re
+import uuid
 
 import boto3
 import pytest
@@ -45,6 +47,7 @@ def make_context(records: list[dict], batch_number: int = 1) -> dict:
         "logger": logging.getLogger("test"),
         "batch_start_time": dt.datetime.now(dt.timezone.utc),
         "batch_number": batch_number,
+        "batch_uuid": uuid.uuid4(),
         "records": records,
     }
 
@@ -107,7 +110,8 @@ class TestFilename:
         # ".jsonl.gz" (no filename, just the extension) -- confirmed while
         # running the phase 5/6 fixture tests with this same config shape.
         key, _ = _run_and_fetch(s3_client, make_config(), [{"id": 1}])
-        assert key.endswith("/mystream-part-00001.jsonl.gz")
+        basename = key.split("/")[-1]
+        assert re.match(r"^mystream-part-00001-[0-9a-f-]{36}\.jsonl\.gz$", basename), basename
 
 
 class TestSerialization:
