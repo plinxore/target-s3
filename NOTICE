@@ -1,0 +1,17 @@
+target-s3 (plinxore fork)
+Copyright 2026 plinxore
+
+This product is derived from "target-s3" (https://github.com/crowemi/target-s3),
+Copyright (c) 2022-2025 crowemi and contributors, licensed under the
+Apache License, Version 2.0. See LICENSE for the full license text.
+
+The upstream project declared the Apache License, Version 2.0 in its
+pyproject.toml but did not include a LICENSE or NOTICE file in the
+repository at the time this fork was created (commit 39a95d3, 2025-04-29).
+No NOTICE file existed upstream to carry forward.
+
+This fork intends to modify and extend the original work, including but
+not limited to: real gzip/lzma compression support, corrected JSONL
+datetime serialization, and additional test coverage for decimal
+precision and memory-bounded batching under high record volumes. This
+NOTICE will be updated as those changes land.
