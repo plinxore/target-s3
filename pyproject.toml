@@ -30,6 +30,15 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.9,<3.12"
 dependencies = [
+    # singer-sdk -> fs (via helpers/_batch.py) calls the deprecated
+    # pkg_resources.declare_namespace() at import time, without pinning
+    # setuptools tightly enough to guarantee it stays available: setuptools
+    # >=81 dropped pkg_resources outright, so a fresh install can resolve a
+    # setuptools that makes `import target_s3` crash immediately. Confirmed
+    # by installing this exact wheel into a clean venv. Pinning here works
+    # around fs's own underconstrained dependency, not something this
+    # project's code does.
+    "setuptools<81",
     "requests==2.32.3",
     "singer-sdk==0.33.1",
     "smart-open[s3]==6.4.0",
