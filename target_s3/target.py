@@ -48,12 +48,20 @@ class Targets3(Target):
                             "get_schema_from_tap",
                             th.BooleanType,
                             required=False,
-                            default=False,
-                            description="Set true if you want to declare schema of the\
-                                         resulting parquet file based on taps. Doesn't \
-                                         work with 'anyOf' types or when complex data is\
-                                         not defined at element level. Doesn't work with \
-                                         validate option for now."
+                            default=True,
+                            description="Derive the Parquet schema once from the "
+                            "stream's Singer SCHEMA message and reuse it for every "
+                            "batch of that stream, instead of letting pyarrow infer "
+                            "a schema independently per batch. Per-batch inference "
+                            "(set this to false to use it) is what causes schema "
+                            "drift between Parquet files of the same stream -- a "
+                            "batch where a column happens to be all-null infers "
+                            "that column as pyarrow's null type, while a later "
+                            "batch with real values infers a real type, producing "
+                            "files that can't be read together. Doesn't work with "
+                            "'anyOf' types or when complex data is not defined at "
+                            "element level. Doesn't work with the validate option "
+                            "(validate only applies to the per-batch-inference path)."
                         ),
                     ),
                     required=False,
@@ -242,8 +250,21 @@ class Targets3(Target):
         """
         try:
             self.format = self.config.get("format", None)
-            format_parquet = self.format.get("format_parquet", None)
-            if format_parquet and format_parquet.get("get_schema_from_tap", False):
+            format_parquet = self.format.get("format_parquet") or {}
+            # get_schema_from_tap's schema hardcodes number fields to
+            # pyarrow.float64() (create_schema() in format_parquet.py), so
+            # Decimal values must be parsed as plain floats there or
+            # Table.from_pydict() rejects them. This ONLY applies when
+            # Parquet is actually the format in use -- the previous check
+            # here didn't look at format_type at all, so a truthy
+            # get_schema_from_tap (its default as of this version) would
+            # have silently disabled exact Decimal parsing for jsonl/json/
+            # csv streams too, even though those formats have no trouble
+            # with Decimal at all (see target_s3/tests/test_format_jsonl.py).
+            uses_tap_derived_parquet_schema = self.format.get(
+                "format_type"
+            ) == "parquet" and format_parquet.get("get_schema_from_tap", True)
+            if uses_tap_derived_parquet_schema:
                 return json.loads(line)  # type: ignore[no-any-return]
             else:
                 return json.loads(  # type: ignore[no-any-return]

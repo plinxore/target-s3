@@ -53,7 +53,20 @@ class FormatBase(metaclass=ABCMeta):
             f"FormatBase.__init__: Unknown compression type '{compression_key}'. "
             f"Expected one of {list(COMPRESSION)}."
         )
+        # The raw config choice ("none"/"gzip"), kept around so subclasses
+        # with their own compression mechanism (e.g. Parquet's internal
+        # per-file codec) can translate it themselves rather than reusing
+        # compression_mode/compression_extension below, which are specific
+        # to the external gzip-wrapping used by JSON/JSONL/CSV.
+        self.compression = compression_key
         self.compression_extension, self.compression_mode = COMPRESSION[compression_key]
+        if self.extension == "parquet":
+            # Parquet compression is a codec internal to the file (each
+            # column chunk), not an external wrapper -- a "*.parquet.gz"
+            # filename would be actively misleading (the file isn't gzip
+            # data, it's a normal Parquet file that happens to use gzip
+            # internally). See FormatParquet._write().
+            self.compression_extension = ""
 
         self.stream_name_path_override = config.get("stream_name_path_override", None)
         self.partition_by = config.get("partition_by", [])

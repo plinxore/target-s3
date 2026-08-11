@@ -7,6 +7,16 @@ from pyarrow.parquet import ParquetWriter
 
 from target_s3.formats.format_base import FormatBase
 
+# Parquet compression is a codec internal to the file (ParquetWriter's own
+# `compression=` argument), not the external gzip-wrapping used for
+# JSON/JSONL/CSV -- deliberately not derived from compression_mode, which is
+# specific to that wrapper. Kept to the two values `compression` actually
+# supports today (mirrors that setting rather than expanding it).
+PARQUET_COMPRESSION_CODEC = {
+    "none": "none",
+    "gzip": "gzip",
+}
+
 
 class FormatParquet(FormatBase):
     def __init__(self, config, context) -> None:
@@ -345,8 +355,21 @@ class FormatParquet(FormatBase):
     def create_dataframe(self) -> Table:
         """Creates a pyarrow Table object from the record set."""
         try:
-            format_parquet = self.format.get("format_parquet", None)
-            if format_parquet and format_parquet.get("get_schema_from_tap", False):
+            # format_parquet may be absent, None, or present-but-empty
+            # ({} -- e.g. the default in sample-config.json); `or {}`
+            # normalizes all three to the same "nothing set" case instead of
+            # letting an empty-but-present dict short-circuit past the
+            # get_schema_from_tap default below.
+            format_parquet = self.format.get("format_parquet") or {}
+            if format_parquet.get("get_schema_from_tap", True):
+                # Default path: derive the schema once from the stream's
+                # Singer SCHEMA message instead of letting pyarrow infer it
+                # per batch. Per-batch inference is what caused schema
+                # drift across files for the same stream -- e.g. a batch
+                # where a column is all-null infers that column as pyarrow
+                # null-type, while a later batch with real values for the
+                # same column infers a real type, producing Parquet files
+                # for the same stream that can't be read together.
                 parquet_schema = (
                     self.parquet_schema if self.parquet_schema else self.create_schema()
                 )
@@ -358,10 +381,14 @@ class FormatParquet(FormatBase):
 
                 ret = Table.from_pydict(mapping=input, schema=parquet_schema)
             else:
+                # Escape hatch only: format_parquet.get_schema_from_tap must
+                # be explicitly set to false to reach this. Infers the
+                # schema from this batch's actual values, independently per
+                # batch -- carries the schema-drift risk described above.
                 fields = set()
                 for d in self.records:
                     fields = fields.union(d.keys())
-                if format_parquet and format_parquet.get("validate", None) == True:
+                if format_parquet.get("validate", None) == True:
                     # NOTE: we may could use schema to build a pyarrow schema https://arrow.apache.org/docs/python/generated/pyarrow.Schema.html
                     # and pass that into from_pydict(). The schema is inferred by pyarrow, but we could always be explicit about it.
                     schema = dict()
@@ -393,10 +420,15 @@ class FormatParquet(FormatBase):
     def _write(self, contents: str = None) -> None:
         df = self.create_dataframe()
         try:
+            # fully_qualified_key already carries the .parquet extension
+            # (added by create_key()); appending self.extension again here
+            # used to produce keys like "...parquet.parquet" (or, before
+            # FormatBase stopped applying the JSONL/CSV gzip-wrapper suffix
+            # to Parquet, "...parquet.gz.parquet").
             ParquetWriter(
-                f"{self.fully_qualified_key}.{self.extension}",
+                self.fully_qualified_key,
                 df.schema,
-                compression="gzip",  # TODO: support multiple compression types
+                compression=PARQUET_COMPRESSION_CODEC[self.compression],
                 filesystem=self.file_system,
             ).write_table(df)
         except Exception as e:
