@@ -1,9 +1,21 @@
 # target-s3
 
-`target-s3` is inteded to be a multi-format/multi-cloud Singer target.
+[![PyPI version](https://img.shields.io/pypi/v/plinxore-target-s3.svg)](https://pypi.org/project/plinxore-target-s3/)
+[![CI](https://github.com/plinxore/target-s3/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/plinxore/target-s3/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/plinxore-target-s3.svg)](https://pypi.org/project/plinxore-target-s3/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-Build with the [Meltano Target SDK](https://sdk.meltano.com).
+`target-s3` is a multi-format/multi-cloud Singer target, writing streams to S3-compatible object storage (AWS S3, MinIO, ...) as JSON, JSONL, CSV, or Parquet.
 
+Built with the [Meltano Target SDK](https://sdk.meltano.com).
+
+> **Provenance:** this is the `plinxore` fork of [`crowemi/target-s3`](https://github.com/crowemi/target-s3), matured for production use: real gzip compression (the original wrote plaintext behind a misleading `.gz` extension), corrected JSONL datetime serialization, configurable handling of unparseable source dates (e.g. legacy MySQL/MyISAM zero-dates), and a collision-safe batch filename scheme that guarantees a rerun can never silently overwrite a previous run's files. See [NOTICE](NOTICE) for the full derivation statement required by the Apache 2.0 license.
+
+## Installation
+
+```bash
+pip install plinxore-target-s3
+```
 
 ## Configuration
 
@@ -94,16 +106,41 @@ environment variable is set either in the terminal context or in the `.env` file
 
 You can easily run `target-s3` by itself or in a pipeline using [Meltano](https://meltano.com/).
 
-### Executing the Target Directly
+### Direct CLI (without Meltano)
 
 ```bash
 target-s3 --version
-target-s3 --help
+target-s3 --about
 # Test using the "Carbon Intensity" sample:
 tap-carbon-intensity | target-s3 --config /path/to/target-s3-config.json
 ```
 
+### Via Meltano (recommended)
+
+```bash
+# Install the Meltano CLI (if not already done)
+pipx install meltano
+
+# Add this variant explicitly
+meltano add loader target-s3 --variant plinxore
+
+# Install the plugins declared in meltano.yml
+meltano install
+
+# Run the pipeline
+meltano run tap-mysql target-s3
+```
+
+## Development
+
+### Tests
+
+```bash
+uv run pytest              # fast suite (excludes the load test)
+uv run pytest -m load      # permanent >=1M-record memory/throughput regression test (several minutes)
+```
+
 ### SDK Dev Guide
 
-See the [dev guide](https://sdk.meltano.com/en/latest/dev_guide.html) for more instructions on how to use the Meltano Singer SDK to
+See the [Meltano Singer SDK dev guide](https://sdk.meltano.com/en/latest/dev_guide.html) for more instructions on how to
 develop your own Singer taps and targets.

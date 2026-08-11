@@ -1,37 +1,79 @@
-[tool.poetry]
-name = "target-s3"
-version = "1.0.7"
-description = "`target-s3` is a Singer target for s3, built with the Meltano Singer SDK."
-authors = ["crowemi"]
+[build-system]
+requires = [
+    "hatchling>=1,<2",
+    "hatch-vcs>=0.5",
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "plinxore-target-s3"
+dynamic = ["version"]
+description = "Singer target for S3-compatible object storage (JSON/JSONL/CSV/Parquet), built with the Meltano Singer SDK. plinxore fork of crowemi/target-s3 with real gzip compression, robust datetime handling, and collision-safe batch file naming -- see NOTICE."
+readme = "README.md"
+authors = [{ name = "Ibrahim Gado Mayaki Hamza", email = "ibrahim.mayaki@plinxore.com" }]
 keywords = [
     "ELT",
+    "meltano",
+    "singer-io",
     "s3",
+    "aws",
+    "jsonl",
 ]
-license = "Apache 2.0"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.9,<3.12"
+dependencies = [
+    "requests==2.32.3",
+    "singer-sdk==0.33.1",
+    "smart-open[s3]==6.4.0",
+    "pyarrow==10.0.1",
+    "pandas==1.5.3",
+    "numpy==1.26.4",
+    "fsspec==2022.11.0",
+    "s3fs==2022.11.0",
+    "pymongo==4.11.3",
+    "boto3==1.24.59",
+    "simplejson==3.20.1",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.9,<3.12"
-requests = "==2.32.3"
-singer-sdk = "==0.33.1"
-smart-open = {extras = ["s3"], version = "==6.4.0"}
-pyarrow = "==10.0.1"
-pandas = "==1.5.3"
-numpy = "==1.26.4"
-fsspec = "==2022.11.0"
-s3fs = "==2022.11.0"
-pymongo = "==4.11.3"
-boto3 = "==1.24.59"
+[project.urls]
+Homepage   = "https://github.com/plinxore/target-s3"
+Repository = "https://github.com/plinxore/target-s3"
+Issues     = "https://github.com/plinxore/target-s3/issues"
 
-[tool.poetry.group.dev.dependencies]
-black = "^23.3.0"
-pytest = "^6.2.5"
-tox = "^3.24.4"
-pydocstyle = "^6.1.1"
-mypy = "^0.910"
-types-requests = "^2.26.1"
-isort = "^5.10.1"
-moto = {extras = ["s3"], version = "^4.2.14"}
-psutil = "^5.9.0"
+[project.scripts]
+# CLI declaration
+target-s3 = "target_s3.target:Targets3.cli"
+
+[dependency-groups]
+dev = [
+    { include-group = "test" },
+    "black>=23.3.0",
+    "isort>=5.10.1",
+    "pydocstyle>=6.1.1",
+    "mypy>=0.910",
+    "types-requests>=2.26.1",
+    "tox>=3.24.4",
+]
+test = [
+    "pytest>=9",
+    "moto[s3]~=4.2.14",
+    "psutil>=5.9.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["target_s3"]
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "1.0.7.dev0"
 
 [tool.pytest.ini_options]
 markers = [
@@ -43,11 +85,3 @@ addopts = "-m 'not load'"
 profile = "black"
 multi_line_output = 3 # Vertical Hanging Indent
 src_paths = "target_s3"
-
-[build-system]
-requires = ["poetry-core>=1.0.8"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
-# CLI declaration
-target-s3 = 'target_s3.target:Targets3.cli'
