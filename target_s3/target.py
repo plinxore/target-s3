@@ -15,9 +15,12 @@ from target_s3.sinks import (
 
 
 class Targets3(Target):
-    """Sample target for s3."""
+    """Singer target for S3-compatible object storage (plinxore fork)."""
 
     name = "target-s3"
+    # Name of the actually installed PyPI package (different from `name`
+    # above), required for get_plugin_version() to resolve the right version.
+    package_name = "plinxore-target-s3"
     config_jsonschema = th.PropertiesList(
         th.Property(
             "format",
