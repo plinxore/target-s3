@@ -22,6 +22,14 @@ message (declared types, not observed values) and is now the default path
 stream gets the identical schema regardless of which columns happen to be
 populated in that particular batch.
 
+DECIMAL-shaped columns (multipleOf present, e.g. a MySQL DECIMAL with no
+bounds) map to pyarrow.decimal128 rather than float64, with the scale
+taken from multipleOf (0.01 -> 2) and a fixed precision of 38 (decimal128's
+max). float64 can't represent every decimal value exactly, so this is what
+actually keeps a billing amount like 1234.56 bit-for-bit exact through
+Parquet -- the same guarantee test_format_jsonl.py and
+test_invoices_fixture.py already prove for JSONL.
+
 These tests write real Parquet files to the local filesystem (via a
 FormatParquet subclass that swaps pyarrow's S3FileSystem for a
 LocalFileSystem -- moto cannot mock pyarrow's own S3 client, which talks to
@@ -33,6 +41,7 @@ s3(..., 'Parquet', ...) over multiple files) would need to.
 from __future__ import annotations
 
 import datetime as dt
+import decimal
 import io
 import json
 import logging
@@ -65,11 +74,14 @@ STREAM_SCHEMA = {
 }
 
 # batch 1: "amount" is all-null. batch 2: "amount" has real values. Same
-# stream, same schema -- this is the exact drift trigger.
+# stream, same schema -- this is the exact drift trigger. 1234.56 and
+# -56.78 are not exactly representable in binary float64 (their true
+# float64 value differs from the decimal text at enough digits to matter
+# for money); decimal128 must carry them through bit-for-bit.
 RECORDS = [
     {"id": 1, "name": "a", "amount": None},
     {"id": 2, "name": "b", "amount": None},
-    {"id": 3, "name": "c", "amount": 12.34},
+    {"id": 3, "name": "c", "amount": 1234.56},
     {"id": 4, "name": "d", "amount": -56.78},
 ]
 
@@ -153,11 +165,27 @@ class TestSchemaStabilityAcrossBatches:
         assert sorted(combined.column("id").to_pylist()) == [1, 2, 3, 4]
 
         # The all-null batch's "amount" column must be typed as a real
-        # number (from the declared schema), not pyarrow's null() type --
-        # otherwise this would "pass" schema-equality trivially by both
-        # being null, without actually proving the fix.
-        assert tables[0].schema.field("amount").type == pyarrow.float64()
-        assert tables[1].schema.field("amount").type == pyarrow.float64()
+        # DECIMAL (from the declared schema's multipleOf), not pyarrow's
+        # null() type -- otherwise this would "pass" schema-equality
+        # trivially by both being null, without actually proving the fix.
+        expected_type = pyarrow.decimal128(38, 2)
+        assert tables[0].schema.field("amount").type == expected_type
+        assert tables[1].schema.field("amount").type == expected_type
+
+        # The Parquet counterpart of JSONL's 2430-comparison decimal check:
+        # the values read back must be the exact Decimal, not a float64
+        # round-trip. amount() at 4 decimal places would catch drift that
+        # str()-based comparisons could paper over (float64's 1234.56 and
+        # the true decimal 1234.56 happen to share the same shortest repr,
+        # so only a value-level Decimal comparison actually proves this).
+        amounts_by_id = dict(zip(combined.column("id").to_pylist(), combined.column("amount").to_pylist()))
+        assert amounts_by_id[1] is None
+        assert amounts_by_id[2] is None
+        assert amounts_by_id[3] == decimal.Decimal("1234.56")
+        assert amounts_by_id[4] == decimal.Decimal("-56.78")
+        assert isinstance(amounts_by_id[3], decimal.Decimal), (
+            f"expected an exact Decimal, got {type(amounts_by_id[3])}"
+        )
 
     def test_escape_hatch_reproduces_the_original_drift(self, tmp_path, local_parquet_fs):
         # Documents the failure mode this fork fixed: with the per-batch
@@ -200,7 +228,7 @@ class TestSchemaStabilityAcrossBatches:
         files = _written_parquet_files(tmp_path)
         tables = [pyarrow.parquet.read_table(f) for f in files]
         assert tables[0].schema.equals(tables[1].schema)
-        assert tables[0].schema.field("amount").type == pyarrow.float64()
+        assert tables[0].schema.field("amount").type == pyarrow.decimal128(38, 2)
 
 
 class TestParquetCompression:

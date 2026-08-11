@@ -1,3 +1,4 @@
+import decimal
 import json
 from typing import List, Tuple, Union
 
@@ -6,6 +7,26 @@ from pyarrow import Table, fs
 from pyarrow.parquet import ParquetWriter
 
 from target_s3.formats.format_base import FormatBase
+
+# decimal128's max supported precision. Fixed rather than derived from the
+# schema (which has no upper-bound signal for a DECIMAL column beyond
+# multipleOf's scale) -- generous headroom for any real amount, no overflow
+# risk.
+DECIMAL_MAX_PRECISION = 38
+
+
+def _decimal_scale_from_multiple_of(multiple_of) -> int:
+    """Derive a DECIMAL column's scale from its Singer schema `multipleOf`
+    (e.g. 0.01 -> 2, 0.001 -> 3, 1 -> 0).
+
+    Goes through str() rather than doing float arithmetic directly: Singer
+    SCHEMA messages may hand this a plain Python float (e.g. 0.01), and
+    str() of a "clean" decimal float reliably round-trips to its shortest
+    representation ("0.01", not the underlying binary approximation), which
+    Decimal() can then read exactly.
+    """
+    exponent = decimal.Decimal(str(multiple_of)).normalize().as_tuple().exponent
+    return max(0, -exponent) if isinstance(exponent, int) else 0
 
 # Parquet compression is a codec internal to the file (ParquetWriter's own
 # `compression=` argument), not the external gzip-wrapping used for
@@ -287,7 +308,21 @@ class FormatParquet(FormatBase):
                 if "integer" in type:
                     fields.append(pyarrow.field(key, pyarrow.int64()))
                 elif "number" in type:
-                    fields.append(pyarrow.field(key, pyarrow.float64()))
+                    # A DECIMAL-shaped MySQL column (multipleOf present, no
+                    # bounds -- see the mandate's phase 6 audit) needs exact
+                    # precision; float64 can't represent e.g. 1234.56
+                    # exactly. A plain "number" with no multipleOf (a real
+                    # float column) keeps float64 unchanged.
+                    multiple_of = val.get("multipleOf")
+                    if multiple_of is not None:
+                        scale = _decimal_scale_from_multiple_of(multiple_of)
+                        fields.append(
+                            pyarrow.field(
+                                key, pyarrow.decimal128(DECIMAL_MAX_PRECISION, scale)
+                            )
+                        )
+                    else:
+                        fields.append(pyarrow.field(key, pyarrow.float64()))
                 elif "boolean" in type:
                     fields.append(pyarrow.field(key, pyarrow.bool_()))
                 elif "string" in type:
@@ -374,10 +409,27 @@ class FormatParquet(FormatBase):
                     self.parquet_schema if self.parquet_schema else self.create_schema()
                 )
                 fields = set([property.name for property in parquet_schema])
-                input = {
-                    f: [self.sanitize(row.get(f)) for row in self.records]
-                    for f in fields
+                # Records arrive with exact Decimal values for every number
+                # field (singer_sdk's default JSON parsing). decimal128
+                # columns want that Decimal as-is -- it's the whole point.
+                # float64 columns don't: pyarrow's Table.from_pydict()
+                # raises when handed a Decimal against an explicit float64
+                # field ("tried to convert to double"), so those need an
+                # explicit float() downcast first.
+                decimal_field_names = {
+                    field.name
+                    for field in parquet_schema
+                    if pyarrow.types.is_decimal(field.type)
                 }
+                input = {}
+                for f in fields:
+                    values = [self.sanitize(row.get(f)) for row in self.records]
+                    if f not in decimal_field_names:
+                        values = [
+                            float(v) if isinstance(v, decimal.Decimal) else v
+                            for v in values
+                        ]
+                    input[f] = values
 
                 ret = Table.from_pydict(mapping=input, schema=parquet_schema)
             else:

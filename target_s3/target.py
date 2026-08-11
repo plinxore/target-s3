@@ -1,8 +1,6 @@
 """s3 target class."""
 
 from __future__ import annotations
-import decimal
-import json
 
 from singer_sdk.target_base import Target
 from singer_sdk import typing as th
@@ -239,40 +237,16 @@ class Targets3(Target):
     def _MAX_RECORD_AGE_IN_MINUTES(self) -> float:  # type: ignore
         return float(self.config.get("max_batch_age", 5.0))
 
-    def deserialize_json(self, line: str) -> dict:
-        """Override base target's method to overcome Decimal cast,
-        only applied when generating parquet schema from tap schema.
-
-        :param line: serialized record from stream
-        :type line: str
-        :return: deserialized record
-        :rtype: dict
-        """
-        try:
-            self.format = self.config.get("format", None)
-            format_parquet = self.format.get("format_parquet") or {}
-            # get_schema_from_tap's schema hardcodes number fields to
-            # pyarrow.float64() (create_schema() in format_parquet.py), so
-            # Decimal values must be parsed as plain floats there or
-            # Table.from_pydict() rejects them. This ONLY applies when
-            # Parquet is actually the format in use -- the previous check
-            # here didn't look at format_type at all, so a truthy
-            # get_schema_from_tap (its default as of this version) would
-            # have silently disabled exact Decimal parsing for jsonl/json/
-            # csv streams too, even though those formats have no trouble
-            # with Decimal at all (see target_s3/tests/test_format_jsonl.py).
-            uses_tap_derived_parquet_schema = self.format.get(
-                "format_type"
-            ) == "parquet" and format_parquet.get("get_schema_from_tap", True)
-            if uses_tap_derived_parquet_schema:
-                return json.loads(line)  # type: ignore[no-any-return]
-            else:
-                return json.loads(  # type: ignore[no-any-return]
-                    line, parse_float=decimal.Decimal
-                )
-        except json.decoder.JSONDecodeError as exc:
-            self.logger.error("Unable to parse:\n%s", line, exc_info=exc)
-            raise
+    # No deserialize_json override: singer_sdk's own default (parse_float=
+    # decimal.Decimal) is correct for every path now. It used to be
+    # overridden to parse plain floats when using Parquet's
+    # get_schema_from_tap, because that path's schema hardcoded every
+    # number field to float64 and pyarrow's Table.from_pydict() rejects
+    # Decimal values against an explicit float64 field. Now that
+    # create_schema() maps DECIMAL-shaped fields (multipleOf present) to
+    # pyarrow.decimal128 instead, Decimal values are exactly what's needed
+    # -- create_dataframe() downcasts to float only for the fields that are
+    # still float64 (see the decimal_fields handling there).
 
 
 if __name__ == "__main__":
