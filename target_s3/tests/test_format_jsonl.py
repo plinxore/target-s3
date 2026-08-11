@@ -99,6 +99,16 @@ class TestCompression:
             FormatJsonl(make_config(compression="bzip2"), make_context([{"id": 1}]))
 
 
+class TestFilename:
+    def test_falls_back_to_stream_name_when_no_date_appended(self, s3_client):
+        # append_date_to_filename/prefix are both False in make_config(): with
+        # nothing to build a basename from, the key used to end in a bare
+        # ".jsonl.gz" (no filename, just the extension) -- confirmed while
+        # running the phase 5/6 fixture tests with this same config shape.
+        key, _ = _run_and_fetch(s3_client, make_config(), [{"id": 1}])
+        assert key.endswith("/mystream.jsonl.gz")
+
+
 class TestSerialization:
     def test_datetime_field_is_serialized_as_iso_string(self, s3_client):
         record = {"id": 1, "created_at": dt.datetime(2024, 3, 5, 12, 30, 45)}
