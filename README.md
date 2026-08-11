@@ -9,7 +9,7 @@
 
 Built with the [Meltano Target SDK](https://sdk.meltano.com).
 
-> **Provenance:** this is the `plinxore` fork of [`crowemi/target-s3`](https://github.com/crowemi/target-s3), matured for production use: real gzip compression (the original wrote plaintext behind a misleading `.gz` extension), corrected JSONL datetime serialization, configurable handling of unparseable source dates (e.g. legacy MySQL/MyISAM zero-dates), and a collision-safe batch filename scheme that guarantees a rerun can never silently overwrite a previous run's files. See [NOTICE](NOTICE) for the full derivation statement required by the Apache 2.0 license.
+> **Provenance:** this is the `plinxore` fork of [`crowemi/target-s3`](https://github.com/crowemi/target-s3), matured for production use: real gzip compression (the original wrote plaintext behind a misleading `.gz` extension), corrected JSONL datetime serialization, configurable handling of unparseable source dates (e.g. legacy MySQL/MyISAM zero-dates), a collision-safe batch filename scheme that guarantees a rerun can never silently overwrite a previous run's files, and a Parquet writer with a schema kept stable across batches (derived once from the Singer SCHEMA rather than re-inferred per batch) plus exact decimal precision for DECIMAL-shaped columns (`decimal128`, not `float64`) -- see [Parquet output](#parquet-output) below. See [NOTICE](NOTICE) for the full derivation statement required by the Apache 2.0 license.
 
 ## Installation
 
@@ -26,6 +26,7 @@ pip install plinxore-target-s3
     "format": {
         "format_type": "json",
         "format_parquet": {
+            "get_schema_from_tap": true|false,
             "validate": true|false
         },
         "format_json": {},
@@ -60,7 +61,9 @@ pip install plinxore-target-s3
     "partition_by": ["tenant=${TENANT}", "dt=${CURRENT_DATE_MINUTE_LEVEL}"]
 }
 ```
-`format.format_parquet.validate` [`Boolean`, default: `False`] - this flag determines whether the data types of incoming data elements should be validated. When set `True`, a schema is created from the first record and all subsequent records that don't match that data type are cast.
+`format.format_parquet.get_schema_from_tap` [`Boolean`, default: `True`] - derives the Parquet schema once from the stream's Singer SCHEMA message and reuses it for every batch of that stream, instead of letting pyarrow infer a schema independently per batch. See [Parquet output](#parquet-output) for why this is the default. Set `False` to fall back to per-batch inference (doesn't work with `anyOf` types or complex data not defined at element level; not compatible with `validate`).
+
+`format.format_parquet.validate` [`Boolean`, default: `False`] - this flag determines whether the data types of incoming data elements should be validated. When set `True`, a schema is created from the first record and all subsequent records that don't match that data type are cast. Only applies to the per-batch-inference path (`get_schema_from_tap: false`).
 
 - `partition_by` [`Array[String]`, optional]: List of key-value strings (e.g., 'tenant=${TENANT}') to be inserted as partition folders **after the stream name** in the S3 key path. For example, if `partition_by: ['tenant=${TENANT}', 'dt=${CURRENT_DATE_MINUTE_LEVEL}']` and the stream is `Account`, the S3 key will look like:
 
@@ -71,6 +74,14 @@ pip install plinxore-target-s3
 - `compression` [`String`, default: `"gzip"`, allowed: `"none"`, `"gzip"`] - compression applied to written files. `"gzip"` produces real gzip output (verified with `gzip -t`, not just a `.gz`-named file); `"none"` disables compression.
 
 - `datetime_error_treatment` [`String`, default: `"null"`, allowed: `"null"`, `"max"`, `"error"`] - how to handle date/date-time values the SDK can't parse, such as legacy MySQL/MyISAM zero-dates (`"0000-00-00 00:00:00"`). `"null"` replaces the value with null so the run continues; `"error"` aborts the run (the SDK's own default behavior if this were unset).
+
+## Parquet output
+
+By default (`format.format_parquet.get_schema_from_tap: true`), the Parquet schema for a stream is derived once from its Singer SCHEMA message and reused for every batch, instead of letting pyarrow infer a schema independently per batch. Per-batch inference is what causes schema drift: a batch where a column happens to be all-null infers that column as pyarrow's `null` type, while a later batch with real values infers a real type -- producing files for the same stream that can't be read together by a single reader (e.g. a multi-file glob in ClickHouse's `s3(..., 'Parquet', ...)` or DuckDB's `read_parquet(...)`).
+
+DECIMAL-shaped numeric columns (a Singer `number` type with `multipleOf` set, e.g. a MySQL `DECIMAL` column) are mapped to `decimal128`, not `float64`, with the scale taken from `multipleOf` and a fixed precision of 38. `float64` cannot represent every decimal value exactly; `decimal128` carries values like `1234.56` through bit-for-bit, matching the exact-precision guarantee this target already provides for JSONL/JSON via `decimal.Decimal`.
+
+Parquet compression uses its own internal per-column-chunk codec (mapped from the `compression` setting), not the external gzip wrapper JSON/JSONL/CSV use -- so a compressed Parquet file keeps a plain `.parquet` extension rather than `.parquet.gz`.
 
 ## Object key uniqueness & idempotency
 
