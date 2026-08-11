@@ -24,6 +24,8 @@ plugins:
       value: false
     - name: compression
       value: gzip
+    - name: datetime_error_treatment
+      value: "null"
     - name: cloud_provider.cloud_provider_type
       value: aws
     - name: cloud_provider.aws.aws_access_key_id

@@ -77,6 +77,17 @@ class Targets3(Target):
             default="gzip",
         ),
         th.Property(
+            "datetime_error_treatment",
+            th.StringType,
+            description="How to handle date/date-time values the SDK cannot parse "
+            "(e.g. MySQL/MyISAM zero-dates like '0000-00-00 00:00:00'). 'null' "
+            "replaces the value with null, 'max' replaces it with the max "
+            "representable timestamp, 'error' aborts the run.",
+            required=False,
+            allowed_values=["null", "max", "error"],
+            default="null",
+        ),
+        th.Property(
             "cloud_provider",
             th.ObjectType(
                 th.Property(

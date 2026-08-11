@@ -31,6 +31,13 @@ mypy = "^0.910"
 types-requests = "^2.26.1"
 isort = "^5.10.1"
 moto = {extras = ["s3"], version = "^4.2.14"}
+psutil = "^5.9.0"
+
+[tool.pytest.ini_options]
+markers = [
+    "load: memory/throughput load tests processing >=1M synthetic records (slow, several minutes). Run explicitly with `pytest -m load`.",
+]
+addopts = "-m 'not load'"
 
 [tool.isort]
 profile = "black"

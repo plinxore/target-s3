@@ -12,5 +12,9 @@ No NOTICE file existed upstream to carry forward.
 
 This fork modifies and extends the original work, including but not
 limited to: a config-driven `compression` setting (`none`/`gzip`) for
-JSON/JSONL/CSV output and corrected JSONL datetime serialization. This
-NOTICE will be updated as further changes land.
+JSON/JSONL/CSV output, corrected JSONL datetime serialization, a
+config-driven `datetime_error_treatment` so unparseable source dates
+(e.g. legacy MySQL/MyISAM zero-dates) no longer abort the run, and
+additional test coverage including a synthetic-data replay of a
+representative wide-row schema and a permanent memory/throughput load
+test. This NOTICE will be updated as further changes land.

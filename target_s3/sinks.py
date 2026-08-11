@@ -3,6 +3,7 @@
 from __future__ import annotations
 import logging
 
+from singer_sdk.helpers._typing import DatetimeErrorTreatmentEnum
 from singer_sdk.sinks import BatchSink
 
 from target_s3.formats.format_base import FormatBase, format_type_factory
@@ -14,6 +15,11 @@ from target_s3.formats.format_jsonl import FormatJsonl
 
 LOGGER = logging.getLogger("target-s3")
 FORMAT_TYPE = {"parquet": FormatParquet, "csv": FormatCsv, "json": FormatJson, "jsonl": FormatJsonl}
+DATETIME_ERROR_TREATMENT = {
+    "error": DatetimeErrorTreatmentEnum.ERROR,
+    "max": DatetimeErrorTreatmentEnum.MAX,
+    "null": DatetimeErrorTreatmentEnum.NULL,
+}
 
 
 class s3Sink(BatchSink):
@@ -46,6 +52,21 @@ class s3Sink(BatchSink):
             Maximum batch size
         """
         return self.config.get("max_batch_size", 10000)
+
+    @property
+    def datetime_error_treatment(self) -> DatetimeErrorTreatmentEnum:
+        """Get the treatment for datetime-like values the SDK can't parse.
+
+        Source systems such as legacy MySQL/MyISAM commonly contain
+        unparseable date-time strings (e.g. zero-dates like
+        "0000-00-00 00:00:00"). By default the SDK raises and aborts the
+        whole run; this makes that behavior config-driven instead.
+
+        Returns:
+            The configured datetime error treatment (default: null out the
+            value rather than crash).
+        """
+        return DATETIME_ERROR_TREATMENT[self.config.get("datetime_error_treatment", "null")]
 
     def process_batch(self, context: dict) -> None:
         """Write out any prepped records and return once fully written."""
