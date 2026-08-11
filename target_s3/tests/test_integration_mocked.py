@@ -51,14 +51,14 @@ BUCKET = "bronze"
 # Mirrors our real path convention (year=/month=/day=, Hive style) -- this
 # is the same layout the original architecture doc says is already used in
 # production for source_db, and it is what target-s3 actually supports.
-# It does NOT produce a single combined "dt=YYYY-MM-DD" folder or a
-# "part-NNNN" counter-based filename -- there is no part-counter concept in
-# this target; batch uniqueness comes from the date/time suffix on the
-# filename instead (see the multi-batch tests below).
+# It does NOT produce a single combined "dt=YYYY-MM-DD" folder. Filename
+# uniqueness comes from a monotonic per-run "-part-NNNNN" counter, not a
+# timestamp (a wall-clock suffix can collide under load and breaks
+# idempotency across reruns -- see TestMultiBatchSameStream/TestIdempotency).
 KEY_PATTERN = re.compile(
     r"^sources/source_db/(?P<stream>\w+)/"
     r"year=(?P<year>\d{4})/month=(?P<month>\d{2})/day=(?P<day>\d{2})/"
-    r"(?P=stream)(?P<suffix>\d{8}-\d{12})\.jsonl\.gz$"
+    r"(?P=stream)-part-(?P<part>\d{5})\.jsonl\.gz$"
 )
 
 
@@ -78,8 +78,9 @@ def base_config(**overrides) -> dict:
         "append_date_to_prefix": True,
         "partition_name_enabled": True,
         "append_date_to_prefix_grain": "day",
-        "append_date_to_filename": True,
-        "append_date_to_filename_grain": "microsecond",
+        # Uniqueness now comes from the part-counter, not a timestamp -- no
+        # need to append a date/time string to the filename by default.
+        "append_date_to_filename": False,
         "max_batch_size": 10000,
     }
     config.update(overrides)
@@ -165,19 +166,25 @@ class TestRealPathShape:
         m = KEY_PATTERN.match(key)
         assert m, f"key does not match expected path shape: {key}"
         assert m.group("stream") == "invoices"
-        # fix #38 (empty filename -> stream_name fallback) holds even once
-        # a real date suffix is appended: the filename still *starts* with
-        # the stream name, it's not just a bare timestamp.
-        assert key.split("/")[-1].startswith("invoices")
+        assert m.group("part") == "00001"
+        # fix #38 (empty filename -> stream_name fallback) holds even with
+        # the part-counter appended: the filename still *starts* with the
+        # stream name, matching .../invoices-part-00001.jsonl.gz exactly.
+        assert key.split("/")[-1] == "invoices-part-00001.jsonl.gz"
 
 
 class TestMultiBatchSameStream:
     """max_batch_size=150 against the 405-record invoices fixture forces 3
     batches for a single stream -- the real risk surface for large tables
     like the production `invoices` (~1M rows / 10k per batch ~= 178
-    batches)."""
+    batches). These were "test_KNOWN_GOTCHA_..." before the -part-NNNNN
+    counter existed: every batch for a stream on the same UTC day computed
+    the identical key, so batch N silently overwrote batch N-1's object --
+    the run reported success, nothing raised, and only the last batch
+    survived. The counter fixes this at the root; these are now the
+    permanent non-regression guard for it."""
 
-    def test_with_microsecond_filename_grain_all_batches_are_kept(self, s3_client):
+    def test_all_batches_are_kept_via_part_counter(self, s3_client):
         with INVOICES_FIXTURE.open() as f:
             content = f.read()
         _listen(base_config(max_batch_size=150), content)
@@ -187,6 +194,11 @@ class TestMultiBatchSameStream:
             f"expected 3 distinct objects (one per batch), got {len(objects)}: "
             f"{list(objects)}"
         )
+        assert {KEY_PATTERN.match(k).group("part") for k in objects} == {
+            "00001",
+            "00002",
+            "00003",
+        }
         all_ids = set()
         total = 0
         for raw in objects.values():
@@ -196,37 +208,95 @@ class TestMultiBatchSameStream:
         assert total == 405, f"expected 405 total records across all batches, got {total}"
         assert all_ids == set(range(1, 406)), "some ids missing or duplicated across batches"
 
-    def test_KNOWN_GOTCHA_default_day_grain_silently_overwrites_earlier_batches(
-        self, s3_client
-    ):
-        # This is NOT a regression we're fixing here -- it's the target's
-        # own default (`append_date_to_filename_grain` defaults to "day" in
-        # target.py) documented as a failure mode. Every batch for a
-        # multi-batch stream on the same UTC day computes the exact same
-        # key and overwrites the previous batch's object; only the last
-        # batch survives. This is a *silent* data-loss path: the run
-        # reports success, no exception is raised. See the phase 8 report
-        # for the recommended fix (change the default grain, or move to a
-        # monotonic per-batch counter) -- pending a decision, not applied.
+    def test_no_overwrite_even_with_the_historically_dangerous_day_grain(self, s3_client):
+        # Belt and suspenders: even if append_date_to_filename is turned
+        # back on with the target's own schema-default grain ("day" --
+        # exactly the setting that used to cause silent data loss), the
+        # part-counter alone is what guarantees uniqueness now, so the
+        # outcome must be identical to the counter-only case above.
         with INVOICES_FIXTURE.open() as f:
             content = f.read()
         _listen(
             base_config(
                 max_batch_size=150,
+                append_date_to_filename=True,
                 append_date_to_filename_grain="day",
             ),
             content,
         )
 
         objects = _all_objects(s3_client)
-        assert len(objects) == 1, (
-            "if this starts failing because more than one object was written, "
-            "the overwrite gotcha has been fixed upstream of this test -- "
-            "update/remove this test rather than treating the failure as a bug"
+        assert len(objects) == 3, (
+            f"expected 3 distinct objects even with day-grain filenames, got "
+            f"{len(objects)}: {list(objects)}"
         )
-        [raw] = objects.values()
-        records = _decompress_lines(raw)
-        assert len(records) == 105, "only the last (3rd) batch's 105 records survive"
+        total = sum(len(_decompress_lines(raw)) for raw in objects.values())
+        assert total == 405
+
+    def test_large_batch_count_matching_real_invoices_ratio(self, s3_client):
+        # source_db.invoices is ~~1M rows at max_batch_size=10000,
+        # i.e. ~178 batches. Reproducing that record volume here would be
+        # slow for a default (non "load"-marked) test, so this keeps the
+        # same *batch count* by cycling a handful of villes records with a
+        # small max_batch_size -- what's under test is key uniqueness
+        # across many batches, not throughput (that's test_load_memory.py).
+        with VILLES_FIXTURE.open() as f:
+            schema_line, *record_lines = f.read().splitlines()
+
+        num_batches = 178
+        batch_size = 3
+        total_records = num_batches * batch_size
+
+        def feed():
+            yield schema_line + "\n"
+            base_records = [json.loads(l)["record"] for l in record_lines]
+            for i in range(total_records):
+                record = dict(base_records[i % len(base_records)])
+                record["id"] = i
+                yield json.dumps({"type": "RECORD", "stream": "villes", "record": record}) + "\n"
+
+        _listen(base_config(max_batch_size=batch_size), "".join(feed()))
+
+        objects = _all_objects(s3_client)
+        assert len(objects) == num_batches, (
+            f"expected {num_batches} distinct objects, got {len(objects)}"
+        )
+        parts = {KEY_PATTERN.match(k).group("part") for k in objects}
+        assert parts == {f"{n:05d}" for n in range(1, num_batches + 1)}
+
+        all_ids = set()
+        for raw in objects.values():
+            all_ids.update(r["id"] for r in _decompress_lines(raw))
+        assert all_ids == set(range(total_records)), "no batch's records were lost or duplicated"
+
+
+class TestIdempotency:
+    def test_rerunning_the_same_stream_overwrites_rather_than_duplicates(self, s3_client):
+        # A retried/rerun extraction (e.g. a Dagster retry) replays the
+        # exact same Singer stream. Batch N must get the exact same key on
+        # both runs -- otherwise a rerun silently accumulates duplicate
+        # objects that a downstream reader (ClickHouse s3()) would
+        # double-count, which is exactly what a timestamp-based suffix
+        # would do (new wall-clock time -> new filename -> new object).
+        with INVOICES_FIXTURE.open() as f:
+            content = f.read()
+        config = base_config(max_batch_size=150)
+
+        _listen(config, content)
+        objects_after_first_run = _all_objects(s3_client)
+        assert len(objects_after_first_run) == 3
+
+        _listen(config, content)
+        objects_after_second_run = _all_objects(s3_client)
+
+        assert set(objects_after_second_run) == set(objects_after_first_run), (
+            "a rerun produced different keys than the first run -- this would "
+            "accumulate duplicates in MinIO instead of overwriting"
+        )
+        assert len(objects_after_second_run) == 3
+
+        total = sum(len(_decompress_lines(raw)) for raw in objects_after_second_run.values())
+        assert total == 405, "rerun should still total 405 records, not 810"
 
 
 class TestCompressionEndToEnd:

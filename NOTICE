@@ -14,7 +14,11 @@ This fork modifies and extends the original work, including but not
 limited to: a config-driven `compression` setting (`none`/`gzip`) for
 JSON/JSONL/CSV output, corrected JSONL datetime serialization, a
 config-driven `datetime_error_treatment` so unparseable source dates
-(e.g. legacy MySQL/MyISAM zero-dates) no longer abort the run, and
-additional test coverage including a synthetic-data replay of a
-representative wide-row schema and a permanent memory/throughput load
-test. This NOTICE will be updated as further changes land.
+(e.g. legacy MySQL/MyISAM zero-dates) no longer abort the run, a
+monotonic per-batch "-part-NNNNN" filename counter so multiple batches
+of the same stream never silently overwrite one another (the original
+had no batch-uniqueness mechanism at all beyond an optional, clock-based
+filename suffix), and additional test coverage including a
+synthetic-data replay of a representative wide-row schema, a permanent
+memory/throughput load test, and mocked multi-stream/multi-batch
+integration tests. This NOTICE will be updated as further changes land.

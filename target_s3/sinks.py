@@ -43,6 +43,12 @@ class s3Sink(BatchSink):
                 )
         else:
             raise Exception("No file type supplied.")
+        # Monotonic, per-stream, per-run counter used to guarantee a unique
+        # object key per batch (see create_key()'s "-part-NNNNN" suffix).
+        # Deliberately clock-independent: a wall-clock timestamp can collide
+        # under load and breaks idempotency (a rerun of the same extraction
+        # would mint new filenames instead of overwriting the same ones).
+        self._batch_counter = 0
 
     @property
     def max_size(self) -> int:
@@ -74,6 +80,8 @@ class s3Sink(BatchSink):
         context["stream_name"] = self.stream_name
         context["logger"] = self.logger
         context["stream_schema"] = self.schema
+        self._batch_counter += 1
+        context["batch_number"] = self._batch_counter
         # creates new object for each batch
         format_type_client = format_type_factory(
             FORMAT_TYPE[self.format_type], self.config, context

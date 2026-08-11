@@ -186,7 +186,11 @@ class Targets3(Target):
         th.Property(
             "append_date_to_filename",
             th.BooleanType,
-            description="A flag to append the date to the key filename.",
+            description="A flag to append the date to the key filename, for "
+            "readability. Every filename already carries a monotonic "
+            "'-part-NNNNN' batch counter regardless of this setting, so "
+            "this is purely cosmetic -- it is not what guarantees "
+            "batch-to-batch uniqueness.",
             default=True,
         ),
         th.Property(

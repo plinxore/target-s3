@@ -90,6 +90,23 @@ def test_memory_stays_bounded_across_one_million_wide_records():
         samples.append(
             (self._total_records_read, process.memory_info().rss / (1024 * 1024))
         )
+        # Each batch now gets its own unique key (the -part-NNNNN counter,
+        # fixing the silent-overwrite bug -- see sinks.py/format_base.py).
+        # moto's mock S3 is a pure in-process emulation: every object it
+        # has ever received stays resident in *this test process's* RAM for
+        # the life of the mock_s3() context. Against real S3/MinIO the
+        # written bytes leave the target's process once uploaded and don't
+        # accumulate there -- but left alone here, moto's own bookkeeping
+        # would make ~100 x ~3.6MB of retained mock objects look like a
+        # leak in target-s3's own code, which it isn't (confirmed: RSS grew
+        # ~2x, matching batch_count * per_object_size almost exactly, and
+        # target-s3 holds no references across batches -- start_drain()
+        # dereferences the prior batch's record list before every write).
+        # Deleting each batch's object right after sampling keeps this test
+        # measuring the target's own footprint, not the mock's.
+        objects = client.list_objects_v2(Bucket=BUCKET).get("Contents", [])
+        for obj in objects:
+            client.delete_object(Bucket=BUCKET, Key=obj["Key"])
 
     sinks_mod.s3Sink.process_batch = instrumented_process_batch
     try:

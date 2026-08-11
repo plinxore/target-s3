@@ -142,6 +142,18 @@ class FormatBase(metaclass=ABCMeta):
         if self.config["append_date_to_filename"]:
             grain = DATE_GRAIN[self.config["append_date_to_filename_grain"].lower()]
             file_name += f"{self.create_file_structure(batch_start, grain)}"
+        # Unconditional, clock-independent uniqueness guarantee: without
+        # this, multiple batches for the same stream on the same day (any
+        # stream larger than max_batch_size records) compute the identical
+        # key and each batch silently overwrites the previous one's object
+        # -- the run reports success, nothing raises, and only the last
+        # batch survives. A monotonic per-run counter (not a timestamp)
+        # also keeps reruns of the same extraction idempotent: batch N gets
+        # the same "-part-NNNNN" suffix on every rerun, so a retry
+        # overwrites its own prior objects instead of accumulating
+        # duplicates that a downstream reader (e.g. ClickHouse s3()) would
+        # double-count.
+        file_name += f"-part-{self.context['batch_number']:05d}"
 
         return f"{folder_path}{file_name}.{self.extension}{self.compression_extension}"
 
