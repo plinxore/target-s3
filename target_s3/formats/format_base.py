@@ -8,6 +8,7 @@ from abc import ABCMeta, abstractmethod
 
 from boto3 import Session
 from smart_open import open
+from smart_open.compression import INFER_FROM_EXTENSION, NO_COMPRESSION
 
 
 LOGGER = logging.getLogger("target-s3")
@@ -20,7 +21,12 @@ DATE_GRAIN = {
     "second": 2,
     "microsecond": 1,
 }
-COMPRESSION = {}
+# Maps a `compression` config value to (file extension suffix, smart_open compression mode).
+# smart_open infers the codec to use from the key's extension, so the two must stay in sync.
+COMPRESSION = {
+    "none": ("", NO_COMPRESSION),
+    "gzip": (".gz", INFER_FROM_EXTENSION),
+}
 
 
 def format_type_factory(object_type_class, *pargs, **kargs):
@@ -46,7 +52,12 @@ class FormatBase(metaclass=ABCMeta):
 
         self.context = context
         self.extension = extension
-        self.compression = "gz"  # TODO: need a list of compatible compression types
+        compression_key = config.get("compression", "gzip")
+        assert compression_key in COMPRESSION, (
+            f"FormatBase.__init__: Unknown compression type '{compression_key}'. "
+            f"Expected one of {list(COMPRESSION)}."
+        )
+        self.compression_extension, self.compression_mode = COMPRESSION[compression_key]
 
         self.stream_name_path_override = config.get("stream_name_path_override", None)
         self.partition_by = config.get("partition_by", [])
@@ -87,6 +98,7 @@ class FormatBase(metaclass=ABCMeta):
             f"s3://{self.fully_qualified_key}",
             "w",
             transport_params={"client": self.client},
+            compression=self.compression_mode,
         ) as f:
             f.write(contents)
 
@@ -131,7 +143,7 @@ class FormatBase(metaclass=ABCMeta):
             grain = DATE_GRAIN[self.config["append_date_to_filename_grain"].lower()]
             file_name += f"{self.create_file_structure(batch_start, grain)}"
 
-        return f"{folder_path}{file_name}.{self.extension}.{self.compression}"
+        return f"{folder_path}{file_name}.{self.extension}{self.compression_extension}"
 
     def create_folder_structure(
         self, batch_start: datetime, grain: int, partition_name_enabled: bool

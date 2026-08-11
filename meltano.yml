@@ -22,6 +22,8 @@ plugins:
     - name: format.format_parquet.get_schema_from_tap
       kind: boolean
       value: false
+    - name: compression
+      value: gzip
     - name: cloud_provider.cloud_provider_type
       value: aws
     - name: cloud_provider.aws.aws_access_key_id

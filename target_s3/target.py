@@ -68,6 +68,15 @@ class Targets3(Target):
             ),
         ),
         th.Property(
+            "compression",
+            th.StringType,
+            description="Compression to apply to written files. 'gzip' appends a "
+            ".gz suffix and produces real gzip output; 'none' disables compression.",
+            required=False,
+            allowed_values=["none", "gzip"],
+            default="gzip",
+        ),
+        th.Property(
             "cloud_provider",
             th.ObjectType(
                 th.Property(

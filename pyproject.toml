@@ -30,6 +30,7 @@ pydocstyle = "^6.1.1"
 mypy = "^0.910"
 types-requests = "^2.26.1"
 isort = "^5.10.1"
+moto = {extras = ["s3"], version = "^4.2.14"}
 
 [tool.isort]
 profile = "black"

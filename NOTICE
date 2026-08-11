@@ -10,8 +10,7 @@ pyproject.toml but did not include a LICENSE or NOTICE file in the
 repository at the time this fork was created (commit 39a95d3, 2025-04-29).
 No NOTICE file existed upstream to carry forward.
 
-This fork intends to modify and extend the original work, including but
-not limited to: real gzip/lzma compression support, corrected JSONL
-datetime serialization, and additional test coverage for decimal
-precision and memory-bounded batching under high record volumes. This
-NOTICE will be updated as those changes land.
+This fork modifies and extends the original work, including but not
+limited to: a config-driven `compression` setting (`none`/`gzip`) for
+JSON/JSONL/CSV output and corrected JSONL datetime serialization. This
+NOTICE will be updated as further changes land.
