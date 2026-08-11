@@ -183,7 +183,7 @@ class Targets3(Target):
             "append_date_to_prefix_grain",
             th.StringType,
             description="The grain of the date to append to the prefix.",
-            allowed_values=DATE_GRAIN.keys(),
+            allowed_values=list(DATE_GRAIN.keys()),
             default="day",
         ),
         th.Property(
@@ -200,7 +200,7 @@ class Targets3(Target):
             "append_date_to_filename_grain",
             th.StringType,
             description="The grain of the date to append to the filename.",
-            allowed_values=DATE_GRAIN.keys(),
+            allowed_values=list(DATE_GRAIN.keys()),
             default="day",
         ),
         th.Property(
