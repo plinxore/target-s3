@@ -2,15 +2,16 @@
 
 target-s3-jsonl's default flush mechanism measured `sys.getsizeof()` of a
 Python list (i.e. pointer/container size only), which never crosses its
-threshold in practice, so a full ~1M-row stream (source_db.invoices)
-was held entirely in memory before a single byte was written, and the pod
-OOM-killed. singer_sdk's BatchSink flushes on a real per-record counter
-(`max_batch_size`, default 10000) instead, which structurally bounds memory
--- but that bound is on record *count*, not bytes, so it only proves
-anything on rows as wide as our real data. This test drives >=1M records
-shaped like `invoices` (25 columns, several max-width strings) through the
-real Target/Sink pipeline and asserts memory stays flat across batches
-rather than growing with the number of records processed.
+threshold in practice, so a full ~1M-row stream from a wide production
+table was held entirely in memory before a single byte was written, and
+the pod OOM-killed. singer_sdk's BatchSink flushes on a real per-record
+counter (`max_batch_size`, default 10000) instead, which structurally
+bounds memory -- but that bound is on record *count*, not bytes, so it
+only proves anything on rows as wide as our real data. This test drives
+>=1M records shaped like `invoices` (25 columns, several max-width
+strings) through the real Target/Sink pipeline and asserts memory stays
+flat across batches rather than growing with the number of records
+processed.
 
 This is slow (several minutes) by design -- it is exercising real
 end-to-end throughput, not a mock. Run explicitly with `pytest -m load`.

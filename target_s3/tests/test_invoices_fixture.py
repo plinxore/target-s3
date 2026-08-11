@@ -1,8 +1,9 @@
-"""Replays a realistic Singer stream (structure of source_db.invoices,
-content fully synthetic) end to end through the real Target/Sink pipeline.
+"""Replays a realistic Singer stream (25 columns, real-world SQL types and
+widths, content fully synthetic) end to end through the real Target/Sink
+pipeline.
 
 This is the empirical validation that singer_sdk's native decimal handling
-and datetime coercion behave correctly on data shaped like our actual
+and datetime coercion behave correctly on data shaped like a wide
 production table: 25 columns, 5 DECIMAL columns with `multipleOf` and no
 `minimum`/`maximum` (plus one contrast column without `multipleOf`),
 MyISAM zero-dates, NULL/all-NULL rows, and max-width strings.

@@ -49,8 +49,8 @@ VILLES_FIXTURE = FIXTURES / "villes-fixture.singer.jsonl"
 BUCKET = "bronze"
 
 # Mirrors our real path convention (year=/month=/day=, Hive style) -- this
-# is the same layout the original architecture doc says is already used in
-# production for source_db, and it is what target-s3 actually supports.
+# is the same layout already used in production for a sibling source
+# table, and it is what target-s3 actually supports.
 # It does NOT produce a single combined "dt=YYYY-MM-DD" folder. Filename
 # uniqueness is "-part-NNNNN-<uuid>": the counter gives batches a readable
 # order within a run, the UUID guarantees no two runs can ever collide on
@@ -153,7 +153,7 @@ class TestMultiStream:
         assert len(invoices_records) == 405
         assert len(villes_records) == 30
         # no cross-contamination: villes-only/invoices-only fields never leak
-        # across streams (invoices also happens to have its own "ville"
+        # across streams (invoices also happens to have its own "city"
         # address column, so "population"/"amount" are the fields that
         # actually distinguish the two schemas)
         assert all("population" not in r for r in invoices_records)
@@ -180,7 +180,7 @@ class TestRealPathShape:
 class TestMultiBatchSameStream:
     """max_batch_size=150 against the 405-record invoices fixture forces 3
     batches for a single stream -- the real risk surface for large tables
-    like the production `invoices` (~1M rows / 10k per batch ~= 178
+    like our production invoicing table (~1M rows / 10k per batch ~= ~100
     batches). These were "test_KNOWN_GOTCHA_..." before the -part-NNNNN
     counter existed: every batch for a stream on the same UTC day computed
     the identical key, so batch N silently overwrote batch N-1's object --
@@ -237,9 +237,9 @@ class TestMultiBatchSameStream:
         total = sum(len(_decompress_lines(raw)) for raw in objects.values())
         assert total == 405
 
-    def test_large_batch_count_matching_real_invoices_ratio(self, s3_client):
-        # source_db.invoices is ~~1M rows at max_batch_size=10000,
-        # i.e. ~178 batches. Reproducing that record volume here would be
+    def test_large_batch_count_matching_real_table_ratio(self, s3_client):
+        # Our production invoicing table is ~1M rows at max_batch_size=10000,
+        # i.e. ~100 batches. Reproducing that record volume here would be
         # slow for a default (non "load"-marked) test, so this keeps the
         # same *batch count* by cycling a handful of villes records with a
         # small max_batch_size -- what's under test is key uniqueness
@@ -247,7 +247,7 @@ class TestMultiBatchSameStream:
         with VILLES_FIXTURE.open() as f:
             schema_line, *record_lines = f.read().splitlines()
 
-        num_batches = 178
+        num_batches = 100
         batch_size = 3
         total_records = num_batches * batch_size
 
