@@ -54,6 +54,7 @@ pip install plinxore-target-s3
     "append_date_to_prefix_grain": "day",
     "append_date_to_filename": true|false,
     "append_date_to_filename_grain": "microsecond",
+    "append_uuid": true|false,
     "flattening_enabled": true|false,
     "flattening_max_depth": int,
     "max_batch_age": int,
@@ -85,19 +86,23 @@ Parquet compression uses its own internal per-column-chunk codec (mapped from th
 
 ## Object key uniqueness & idempotency
 
-Every object key ends in `-part-{batch_number:05d}-{uuid}` (e.g.
-`.../year=2026/month=08/day=11/invoices-part-00001-3f2504e0-4f89-11d3-9a0c-0305e82c3301.jsonl.gz`),
-appended after any `append_date_to_filename` suffix:
+Every object key ends in `-part-{batch_number:05d}` (e.g.
+`.../year=2026/month=08/day=11/invoices-part-00001.jsonl.gz`), appended after
+any `append_date_to_filename` suffix, plus a UUID unless `append_uuid: false`
+(e.g. `...invoices-part-00001-3f2504e0-4f89-11d3-9a0c-0305e82c3301.jsonl.gz`):
 
-- `batch_number` is a monotonic counter, reset to 1 at the start of every run, giving batches a readable, ordered position *within that run*.
-- The UUID is generated fresh per batch and is what actually guarantees uniqueness: two different runs of the same stream (e.g. a same-day retry) both start counting batches at 1, so the counter alone cannot prevent one run's files from colliding with another's -- the UUID makes that collision structurally impossible regardless of how many times a stream is replayed.
+- `batch_number` is a monotonic counter, reset to 1 at the start of every run, giving batches a readable, ordered position *within that run*. It is always present, in both modes -- it's what keeps batches of the *same* run from colliding with each other.
+- `append_uuid` [`Boolean`, default: `true`] - whether a UUID, generated fresh per batch, is also appended. This is what decides whether object keys are reusable across runs:
+  - **`true` (default)**: two different runs of the same stream (e.g. a same-day retry) both start counting batches at 1, so the counter alone cannot prevent one run's files from colliding with another's -- the UUID makes that collision structurally impossible regardless of how many times a stream is replayed. **This target only guarantees that a rerun can never silently overwrite a previous run's objects** -- it does not decide whether a rerun's data should *replace* or *add to* what's already been written. An **incremental** table reads via a glob over the date partition (`year=*/month=*/day=*/*.jsonl.gz`) and is expected to accumulate every run's files this way.
+  - **`false`**: object keys become reusable across runs with the same batch layout (same number of batches, same order), so a rerun overwrites the previous run's objects on matching keys instead of accumulating alongside them.
 
-**This target only guarantees that a rerun can never silently overwrite a previous run's objects.** It does not decide whether a rerun's data should *replace* or *add to* what's already been written -- that's a downstream/consumer decision, made per table by how the pipeline reads the objects back:
+**`append_uuid: false` alone is not a full-refresh/overwrite feature -- it is only the naming half of one.** A real idempotent overwrite needs all three of:
 
-- A **full-refresh** table points its reader at a fixed, cleared/replaced path each run.
-- An **incremental** table reads via a glob over the date partition (`year=*/month=*/day=*/*.jsonl.gz`) and is expected to accumulate every run's files.
+1. `append_uuid: false` (this target) -- so a rerun's keys match the previous run's.
+2. Purging the key prefix before the run (**orchestration**'s job) -- so a rerun with *fewer* batches than the previous one doesn't leave orphaned objects behind. If run 1 writes `part-00001` through `part-00003` and run 2 (smaller) only writes `part-00001`, `part-00002` and `part-00003` from run 1 survive untouched unless something purges the prefix first -- this target has no prefix-purge or deduplication logic and never will; it only controls naming.
+3. Reading from a fixed path (the **consumer**'s job, e.g. which path/glob a downstream reader like ClickHouse's `s3()` table function is pointed at) -- an incremental reader globbing over every run's files would just see the overwritten data as more files, not a replacement.
 
-Which of those two a given table needs is decided outside this target (e.g. which path or glob a downstream reader like ClickHouse's `s3()` table function is pointed at).
+This target only ever does (1). Deciding whether a given table needs (1)+(2)+(3) (full-refresh/overwrite) or none of them (incremental/accumulate, the default) is a pipeline decision made outside this target.
 
 ## Capabilities
 

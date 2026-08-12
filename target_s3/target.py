@@ -210,6 +210,26 @@ class Targets3(Target):
             default="day",
         ),
         th.Property(
+            "append_uuid",
+            th.BooleanType,
+            description="Whether to append a random UUID to the key filename, "
+            "after the '-part-NNNNN' batch counter (which is always present "
+            "and unaffected by this setting). 'true' (default) guarantees "
+            "no two runs can ever collide on the same key -- a same-day "
+            "retry gets fresh UUIDs and its objects accumulate alongside "
+            "the previous run's instead of overwriting them, which is the "
+            "safe default for a published target. Set to 'false' to make "
+            "filenames reusable across runs with the same batch layout, so "
+            "a rerun overwrites the previous run's objects on matching keys "
+            "instead of accumulating -- this is one of three things a real "
+            "full-refresh overwrite needs, not the whole mechanism: it must "
+            "be combined with purging the key prefix before the run "
+            "(orchestration) and reading from a fixed path (the consumer). "
+            "This target only controls naming; it does not purge, "
+            "deduplicate, or know whether a given run is a full refresh.",
+            default=True,
+        ),
+        th.Property(
             "max_batch_age",
             th.NumberType,
             description="Maximum time in minutes between state messages when records are streamed in.",

@@ -65,6 +65,15 @@ KEY_PATTERN = re.compile(
     r"\.jsonl\.gz$"
 )
 
+# Same shape as KEY_PATTERN but for append_uuid: false -- no UUID suffix, so
+# keys are reusable across runs with the same batch layout.
+KEY_PATTERN_NO_UUID = re.compile(
+    r"^sources/source_db/(?P<stream>\w+)/"
+    r"year=(?P<year>\d{4})/month=(?P<month>\d{2})/day=(?P<day>\d{2})/"
+    r"(?P=stream)-part-(?P<part>\d{5})"
+    r"\.jsonl\.gz$"
+)
+
 
 def base_config(**overrides) -> dict:
     config = {
@@ -319,6 +328,101 @@ class TestIdempotency:
 
         total = sum(len(_decompress_lines(raw)) for raw in objects_after_both_runs.values())
         assert total == 810, "both runs' records should all be present: 2 x 405"
+
+
+class TestAppendUuidOff:
+    """append_uuid: false trades the TestIdempotency guarantee (a rerun can
+    never clobber a previous run) for the opposite: a rerun with the same
+    batch layout reuses the same keys and overwrites in place. This is only
+    the naming half of a real full-refresh overwrite -- see the second test
+    for the trap that combining it with nothing else falls into, and the
+    README's "Object key uniqueness & idempotency" section for the other two
+    pieces (prefix purge, fixed read path) a pipeline still has to supply."""
+
+    def test_append_uuid_false_produces_reusable_names_across_reruns(self, s3_client):
+        with INVOICES_FIXTURE.open() as f:
+            content = f.read()
+        config = base_config(max_batch_size=150, append_uuid=False)
+
+        _listen(config, content)
+        objects_after_first_run = _all_objects(s3_client)
+        assert len(objects_after_first_run) == 3
+        for key in objects_after_first_run:
+            m = KEY_PATTERN_NO_UUID.match(key)
+            assert m, f"key does not match the no-UUID path shape: {key}"
+
+        _listen(config, content)
+        objects_after_second_run = _all_objects(s3_client)
+
+        assert objects_after_second_run.keys() == objects_after_first_run.keys(), (
+            "a second run with the same batch layout must overwrite the "
+            "same keys, not accumulate new ones"
+        )
+        total = sum(len(_decompress_lines(raw)) for raw in objects_after_second_run.values())
+        assert total == 405, (
+            "overwritten objects must hold exactly one run's worth of "
+            "records, not both runs' -- 810 here would mean this silently "
+            "fell back to accumulating instead of overwriting"
+        )
+
+    def test_KNOWN_smaller_rerun_leaves_orphans_without_prefix_purge(self, s3_client):
+        # This test does not "fix" the behavior it documents -- it proves
+        # append_uuid: false alone is not a full-refresh mechanism. A first
+        # run with a small max_batch_size writes 3 parts; a second,
+        # differently-shaped run (large max_batch_size, so it fits in 1
+        # batch) only overwrites part-00001. Nothing in this target purges
+        # or even knows about part-00002/part-00003 from the first run --
+        # that's explicitly the orchestration layer's job (purge the key
+        # prefix before the run), not this target's. Skipping that step
+        # leaves the smaller run's "full refresh" silently incomplete: a
+        # downstream reader globbing the prefix still sees the orphaned
+        # rows from run 1 alongside run 2's data.
+        with INVOICES_FIXTURE.open() as f:
+            content = f.read()
+
+        _listen(base_config(max_batch_size=150, append_uuid=False), content)
+        objects_after_first_run = _all_objects(s3_client)
+        assert len(objects_after_first_run) == 3
+        assert {KEY_PATTERN_NO_UUID.match(k).group("part") for k in objects_after_first_run} == {
+            "00001",
+            "00002",
+            "00003",
+        }
+        # part-00002/part-00003's content, captured before run 2, is what
+        # the orphan check below proves survives untouched.
+        orphaned_content_from_first_run = {
+            k: v for k, v in objects_after_first_run.items()
+            if KEY_PATTERN_NO_UUID.match(k).group("part") != "00001"
+        }
+
+        _listen(base_config(max_batch_size=10000, append_uuid=False), content)
+        objects_after_second_run = _all_objects(s3_client)
+
+        assert len(objects_after_second_run) == 3, (
+            "KNOWN gap: without a prefix purge between runs, part-00002 and "
+            "part-00003 from the larger first run survive as orphans "
+            "alongside the smaller second run's part-00001 -- append_uuid: "
+            "false only makes keys reusable, it does not purge what a "
+            "smaller rerun no longer writes"
+        )
+        assert {KEY_PATTERN_NO_UUID.match(k).group("part") for k in objects_after_second_run} == {
+            "00001",
+            "00002",
+            "00003",
+        }
+        for key, raw in orphaned_content_from_first_run.items():
+            assert objects_after_second_run[key] == raw, (
+                f"{key} is an orphan from run 1 that run 2 never wrote -- "
+                "it must be untouched, byte for byte"
+            )
+        [part_00001_key] = [
+            k for k in objects_after_second_run
+            if KEY_PATTERN_NO_UUID.match(k).group("part") == "00001"
+        ]
+        assert len(_decompress_lines(objects_after_second_run[part_00001_key])) == 405, (
+            "part-00001 was overwritten by run 2's single batch, which "
+            "holds the whole 405-record fixture"
+        )
 
 
 class TestCompressionEndToEnd:
