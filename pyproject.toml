@@ -25,10 +25,11 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.9,<3.12"
+requires-python = ">=3.9,<3.13"
 dependencies = [
     # singer-sdk -> fs (via helpers/_batch.py) calls the deprecated
     # pkg_resources.declare_namespace() at import time, without pinning
@@ -37,20 +38,26 @@ dependencies = [
     # setuptools that makes `import target_s3` crash immediately. Confirmed
     # by installing this exact wheel into a clean venv. Pinning here works
     # around fs's own underconstrained dependency, not something this
-    # project's code does.
+    # project's code does -- and not pyarrow: re-verified after bumping
+    # pyarrow (10.0.1 -> 17.0.0) by removing this pin and reproducing the
+    # same ModuleNotFoundError: 'pkg_resources' at the exact same import
+    # (singer_sdk.helpers._batch -> fs), independent of pyarrow entirely.
     "setuptools<81",
     "requests==2.32.3",
     "singer-sdk==0.33.1",
     "smart-open[s3]==6.4.0",
-    "pyarrow==10.0.1",
-    # pyarrow==10.0.1's compiled extension only declares numpy>=1.16.6 (no
-    # upper bound) but is itself compiled against numpy's 1.x C API. Without
-    # this pin, pip resolves the latest numpy (2.x), which breaks pyarrow at
-    # import time with "AttributeError: _ARRAY_API not found" /
-    # "numpy.core.multiarray failed to import" -- confirmed by installing
-    # this exact wheel into a clean venv with no numpy pin. Not something
-    # target_s3's own code imports directly; it's pyarrow's ABI requirement.
-    "numpy==1.26.4",
+    "pyarrow==17.0.0",
+    # pyarrow==10.0.1 was compiled against numpy's 1.x C API and crashed
+    # under numpy 2.x ("AttributeError: _ARRAY_API not found"); pyarrow
+    # 17.0.0 is built numpy-2.x-ABI-compatible, confirmed by installing
+    # this exact wheel with no numpy pin at all (pip then resolves
+    # numpy==2.4.6 unconstrained) and running the full test suite,
+    # including the Parquet schema-stability and decimal128-precision
+    # tests, against it -- 29 passed, 1 deselected, no failures. Pinned
+    # here anyway (matching every other dependency's exact pin) to the
+    # version actually tested, rather than trusting pyarrow's own loose
+    # `numpy>=1.16.6` declared bound to keep resolving something sane.
+    "numpy==2.4.6",
     "boto3==1.24.59",
     "simplejson==3.20.1",
     # format_json.py imports `from bson import ObjectId` to stringify
