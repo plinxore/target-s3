@@ -133,18 +133,18 @@ class TestFilename:
         # The bug this guards against: create_key() reused the full
         # stream_name_path_override for both the folder AND the filename.
         # For a single-segment override that's harmless (folder and filename
-        # are identical), but a multi-segment override like
-        # "colisexpat_v6/adresses" embedded a literal "/" in the filename
-        # variable -- which, once concatenated into the S3 key, functions as
-        # yet another folder level. The key ended up looking like
-        # ".../colisexpat_v6/adresses/colisexpat_v6/adresses-part-...", a
-        # duplicated, spurious folder that broke ClickHouse's
-        # ".../day=*/*.jsonl.gz" glob (it expects exactly one path segment
-        # under the day partition, not two).
+        # are identical), but a multi-segment override like "base/table"
+        # embedded a literal "/" in the filename variable -- which, once
+        # concatenated into the S3 key, functions as yet another folder
+        # level. The key ended up looking like
+        # ".../base/table/base/table-part-...", a duplicated, spurious
+        # folder that broke ClickHouse's ".../day=*/*.jsonl.gz" glob (it
+        # expects exactly one path segment under the day partition, not
+        # two).
         key, _ = _run_and_fetch(
             s3_client,
             make_config(
-                stream_name_path_override="colisexpat_v6/adresses",
+                stream_name_path_override="base/table",
                 append_date_to_prefix=True,
                 append_date_to_prefix_grain="day",
                 partition_name_enabled=True,
@@ -156,15 +156,15 @@ class TestFilename:
         # date partition appended after all of them.
         folder = "/".join(key.split("/")[:-1])
         assert re.match(
-            rf"^{re.escape(BUCKET)}/myprefix/colisexpat_v6/adresses/year=\d{{4}}/month=\d{{2}}/day=\d{{2}}$",
+            rf"^{re.escape(BUCKET)}/myprefix/base/table/year=\d{{4}}/month=\d{{2}}/day=\d{{2}}$",
             folder,
         ), folder
 
-        # Filename uses only the last segment ("adresses"), not the full
-        # override value -- no embedded "/", no duplicated "colisexpat_v6".
+        # Filename uses only the last segment ("table"), not the full
+        # override value -- no embedded "/", no duplicated "base".
         basename = key.split("/")[-1]
-        assert re.match(r"^adresses-part-00001-[0-9a-f-]{36}\.jsonl\.gz$", basename), basename
-        assert "colisexpat_v6" not in basename
+        assert re.match(r"^table-part-00001-[0-9a-f-]{36}\.jsonl\.gz$", basename), basename
+        assert "base" not in basename
         assert "/" not in basename
 
         # The concrete regression check: exactly one file directly under the
@@ -173,14 +173,14 @@ class TestFilename:
         import fnmatch
 
         assert fnmatch.fnmatch(
-            key, f"{BUCKET}/myprefix/colisexpat_v6/adresses/year=*/month=*/day=*/*.jsonl.gz"
+            key, f"{BUCKET}/myprefix/base/table/year=*/month=*/day=*/*.jsonl.gz"
         )
-        # "adresses" legitimately appears twice (last folder segment, and
+        # "table" legitimately appears twice (last folder segment, and
         # the filename that reuses it) -- the actual regression signature
-        # was "colisexpat_v6" appearing a second time, duplicated into the
+        # was "base" appearing a second time, duplicated into the
         # filename by the old bug. That must appear exactly once: only as
         # the folder segment it's meant to be.
-        assert key.count("colisexpat_v6") == 1
+        assert key.count("base") == 1
 
 
 class TestSerialization:
