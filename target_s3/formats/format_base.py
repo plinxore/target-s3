@@ -139,7 +139,17 @@ class FormatBase(metaclass=ABCMeta):
             # partition_by values are inserted as folders after the stream name
             partition_path = "/".join(self.partition_by) + "/"
         folder_path = f"{self.bucket}/{self.prefix}/{stream_name}/" + partition_path
-        file_name = stream_name
+        # stream_name_path_override can itself contain path segments (e.g.
+        # "base/table") to nest the folder -- but the filename must never
+        # embed a literal "/": S3 keys are flat strings where "/" is
+        # functionally another path segment, so reusing the full override
+        # value here would silently recreate an extra folder level inside
+        # the filename, duplicating the last segment in the final key
+        # (e.g. ".../base/table/base/table-part-00001....jsonl.gz") and
+        # breaking any downstream glob that expects one file per leaf
+        # folder. Only the last segment goes into the filename; the folder
+        # above already carries every segment.
+        file_name = stream_name.rsplit("/", 1)[-1]
         if self.config["append_date_to_prefix"]:
             grain = DATE_GRAIN[self.config["append_date_to_prefix_grain"].lower()]
             partition_name_enabled = False

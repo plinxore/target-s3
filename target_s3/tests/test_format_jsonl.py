@@ -113,6 +113,75 @@ class TestFilename:
         basename = key.split("/")[-1]
         assert re.match(r"^mystream-part-00001-[0-9a-f-]{36}\.jsonl\.gz$", basename), basename
 
+    def test_single_segment_stream_name_path_override_matches_no_override_shape(
+        self, s3_client
+    ):
+        # Non-regression baseline: a single-segment override (no "/") behaves
+        # exactly like falling back to stream_name -- both the folder and the
+        # filename are just that one segment, same as the no-override case
+        # above (just with "invoices" standing in for the real stream name).
+        key, _ = _run_and_fetch(
+            s3_client, make_config(stream_name_path_override="invoices"), [{"id": 1}]
+        )
+        assert key.split("/")[:-1] == [BUCKET, "myprefix", "invoices"], key
+        basename = key.split("/")[-1]
+        assert re.match(r"^invoices-part-00001-[0-9a-f-]{36}\.jsonl\.gz$", basename), basename
+
+    def test_multi_segment_stream_name_path_override_folder_keeps_all_segments_filename_keeps_only_the_last(
+        self, s3_client
+    ):
+        # The bug this guards against: create_key() reused the full
+        # stream_name_path_override for both the folder AND the filename.
+        # For a single-segment override that's harmless (folder and filename
+        # are identical), but a multi-segment override like
+        # "colisexpat_v6/adresses" embedded a literal "/" in the filename
+        # variable -- which, once concatenated into the S3 key, functions as
+        # yet another folder level. The key ended up looking like
+        # ".../colisexpat_v6/adresses/colisexpat_v6/adresses-part-...", a
+        # duplicated, spurious folder that broke ClickHouse's
+        # ".../day=*/*.jsonl.gz" glob (it expects exactly one path segment
+        # under the day partition, not two).
+        key, _ = _run_and_fetch(
+            s3_client,
+            make_config(
+                stream_name_path_override="colisexpat_v6/adresses",
+                append_date_to_prefix=True,
+                append_date_to_prefix_grain="day",
+                partition_name_enabled=True,
+            ),
+            [{"id": 1}],
+        )
+
+        # Folder keeps every segment of the override, in order, with the
+        # date partition appended after all of them.
+        folder = "/".join(key.split("/")[:-1])
+        assert re.match(
+            rf"^{re.escape(BUCKET)}/myprefix/colisexpat_v6/adresses/year=\d{{4}}/month=\d{{2}}/day=\d{{2}}$",
+            folder,
+        ), folder
+
+        # Filename uses only the last segment ("adresses"), not the full
+        # override value -- no embedded "/", no duplicated "colisexpat_v6".
+        basename = key.split("/")[-1]
+        assert re.match(r"^adresses-part-00001-[0-9a-f-]{36}\.jsonl\.gz$", basename), basename
+        assert "colisexpat_v6" not in basename
+        assert "/" not in basename
+
+        # The concrete regression check: exactly one file directly under the
+        # day partition, matching ClickHouse's glob shape -- fnmatch is what
+        # actually proves this, not just eyeballing the string.
+        import fnmatch
+
+        assert fnmatch.fnmatch(
+            key, f"{BUCKET}/myprefix/colisexpat_v6/adresses/year=*/month=*/day=*/*.jsonl.gz"
+        )
+        # "adresses" legitimately appears twice (last folder segment, and
+        # the filename that reuses it) -- the actual regression signature
+        # was "colisexpat_v6" appearing a second time, duplicated into the
+        # filename by the old bug. That must appear exactly once: only as
+        # the folder segment it's meant to be.
+        assert key.count("colisexpat_v6") == 1
+
 
 class TestSerialization:
     def test_datetime_field_is_serialized_as_iso_string(self, s3_client):
