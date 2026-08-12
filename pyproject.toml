@@ -43,13 +43,23 @@ dependencies = [
     "singer-sdk==0.33.1",
     "smart-open[s3]==6.4.0",
     "pyarrow==10.0.1",
-    "pandas==1.5.3",
+    # pyarrow==10.0.1's compiled extension only declares numpy>=1.16.6 (no
+    # upper bound) but is itself compiled against numpy's 1.x C API. Without
+    # this pin, pip resolves the latest numpy (2.x), which breaks pyarrow at
+    # import time with "AttributeError: _ARRAY_API not found" /
+    # "numpy.core.multiarray failed to import" -- confirmed by installing
+    # this exact wheel into a clean venv with no numpy pin. Not something
+    # target_s3's own code imports directly; it's pyarrow's ABI requirement.
     "numpy==1.26.4",
-    "fsspec==2022.11.0",
-    "s3fs==2022.11.0",
-    "pymongo==4.11.3",
     "boto3==1.24.59",
     "simplejson==3.20.1",
+    # format_json.py imports `from bson import ObjectId` to stringify
+    # MongoDB ObjectId values in its JSON serializer -- `bson` is pymongo's
+    # bundled module, not a standalone package (a same-named but unrelated
+    # `bson` package exists on PyPI and is not what's needed here). Grepping
+    # for the literal string "pymongo" misses this since the code only
+    # references the `bson` import name.
+    "pymongo==4.11.3",
 ]
 
 [project.urls]
