@@ -50,14 +50,17 @@ dependencies = [
     # pyarrow==10.0.1 was compiled against numpy's 1.x C API and crashed
     # under numpy 2.x ("AttributeError: _ARRAY_API not found"); pyarrow
     # 17.0.0 is built numpy-2.x-ABI-compatible, confirmed by installing
-    # this exact wheel with no numpy pin at all (pip then resolves
-    # numpy==2.4.6 unconstrained) and running the full test suite,
-    # including the Parquet schema-stability and decimal128-precision
-    # tests, against it -- 29 passed, 1 deselected, no failures. Pinned
-    # here anyway (matching every other dependency's exact pin) to the
-    # version actually tested, rather than trusting pyarrow's own loose
-    # `numpy>=1.16.6` declared bound to keep resolving something sane.
-    "numpy==2.4.6",
+    # this exact wheel with no numpy pin at all and running the full test
+    # suite against it. First pinned to numpy==2.4.6 (0.1.5), which broke
+    # the Python 3.10 CI leg: numpy>=2.4.0 requires Python>=3.11, silently
+    # narrowing this package's actual supported range below what
+    # requires-python (>=3.9,<3.13) advertised. numpy==2.0.2 is the
+    # highest release with wheels across the full 3.9-3.12 range;
+    # confirmed with clean installs and the full test suite (including
+    # the Parquet schema-stability and decimal128-precision tests) under
+    # all four of 3.9/3.10/3.11/3.12 -- 29 passed, 1 deselected, on every
+    # version.
+    "numpy==2.0.2",
     "boto3==1.24.59",
     "simplejson==3.20.1",
     # format_json.py imports `from bson import ObjectId` to stringify
